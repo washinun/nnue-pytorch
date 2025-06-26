@@ -11,6 +11,7 @@ import typing
 from torch import set_num_threads as t_set_num_threads
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import DataLoader, Dataset
+from schedulefree import RAdamScheduleFree
 
 def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, main_device, epoch_size):
   # Epoch and validation sizes are arbitrary
@@ -41,12 +42,39 @@ class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
     self.every_n_epochs = every_n_epochs
     self.log_dir = log_dir
   
+  def on_train_start(self, trainer, pl_module):
+    """トレーニング開始時にオプティマイザーをtrainモードに設定"""
+      for optimizer in trainer.optimizers:
+        if hasattr(optimizer, 'train'):
+          optimizer.train()
+
+  def on_validation_start(self, trainer, pl_module):
+    """バリデーション開始時にオプティマイザーをevalモードに設定"""
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'eval'):
+        optimizer.eval()
+    
+  def on_test_start(self, trainer, pl_module):
+    """テスト開始時にオプティマイザーをevalモードに設定"""
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'eval'):
+        optimizer.eval()
+    
   def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
     if trainer.current_epoch == 0 or trainer.current_epoch % self.every_n_epochs != 0:
       return
     
     ckpt_file_path = os.path.join(self.log_dir, f'{trainer.current_epoch}.ckpt')
     trainer.save_checkpoint(ckpt_file_path)
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'train'):
+      optimizer.train()
+
+  def on_test_end(self, trainer, pl_module):
+    """テスト終了後にオプティマイザーをtrainモードに戻す"""
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'train'):
+        optimizer.train()
 
 
 def main():

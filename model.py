@@ -6,11 +6,12 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import sys
 import math
+from schedulefree import RAdamScheduleFree
 
 # 3 layer fully connected network
-L1 = 512
+L1 = 1024
 L2 = 16
-L3 = 96
+L3 = 64
 
 class NNUE(pl.LightningModule):
   """
@@ -199,12 +200,12 @@ class NNUE(pl.LightningModule):
       using_lbfgs,
   ):
     # manually warm up lr without a scheduler
-    if self.trainer.global_step - self.warmup_start_global_step < self.num_batches_warmup:
-      warmup_scale = min(1.0, float(self.trainer.global_step - self.warmup_start_global_step + 1) / self.num_batches_warmup)
-    else:
-      warmup_scale = 1.0
+    # if self.trainer.global_step - self.warmup_start_global_step < self.num_batches_warmup:
+    #  warmup_scale = min(1.0, float(self.trainer.global_step - self.warmup_start_global_step + 1) / self.num_batches_warmup)
+    #else:
+    #  warmup_scale = 1.0
     for pg in optimizer.param_groups:
-      pg["lr"] = self.lr[self.parameter_index] * warmup_scale * self.newbob_scale
+      pg["lr"] = self.lr[self.parameter_index] * self.newbob_scale
       self.log("lr", pg["lr"])
 
     # update params
@@ -230,7 +231,7 @@ class NNUE(pl.LightningModule):
       child.weight.data.clamp_(-kMaxWeight, kMaxWeight)
 
   def configure_optimizers(self):
-    return torch.optim.SGD(self.parameters(), lr=self.lr[0], momentum=self.momentum)
+    return RAdamScheduleFree(self.parameters(), lr=self.lr[0], betas=(0.9, 0.999))
 
   def get_layers(self, filt):
     """
