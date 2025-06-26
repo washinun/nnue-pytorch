@@ -62,14 +62,16 @@ class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
         optimizer.eval()
     
   def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'train'):
+        optimizer.train()  
+  
     if trainer.current_epoch == 0 or trainer.current_epoch % self.every_n_epochs != 0:
       return
     
     ckpt_file_path = os.path.join(self.log_dir, f'{trainer.current_epoch}.ckpt')
     trainer.save_checkpoint(ckpt_file_path)
-    for optimizer in trainer.optimizers:
-      if hasattr(optimizer, 'train'):
-        optimizer.train()
+    
 
   def on_test_end(self, trainer, pl_module):
     """テスト終了後にオプティマイザーをtrainモードに戻す"""

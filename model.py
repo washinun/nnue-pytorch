@@ -231,9 +231,7 @@ class NNUE(pl.LightningModule):
       child.weight.data.clamp_(-kMaxWeight, kMaxWeight)
 
   def configure_optimizers(self):
-    optimizer = RAdamScheduleFree(self.parameters(), lr=self.lr[0], betas=(0.9, 0.999))
-    optimizer.train()
-    return optimizer
+    return RAdamScheduleFree(self.parameters(), lr=self.lr[0], betas=(0.9, 0.999))
 
   def get_layers(self, filt):
     """
