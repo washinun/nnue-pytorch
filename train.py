@@ -1,3 +1,4 @@
+# -*- coding: shift_jis -*-
 import argparse
 import model as M
 import nnue_dataset
@@ -44,9 +45,9 @@ class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
   
   def on_train_start(self, trainer, pl_module):
     """トレーニング開始時にオプティマイザーをtrainモードに設定"""
-      for optimizer in trainer.optimizers:
-        if hasattr(optimizer, 'train'):
-          optimizer.train()
+    for optimizer in trainer.optimizers:
+      if hasattr(optimizer, 'train'):
+        optimizer.train()
 
   def on_validation_start(self, trainer, pl_module):
     """バリデーション開始時にオプティマイザーをevalモードに設定"""
@@ -68,7 +69,7 @@ class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
     trainer.save_checkpoint(ckpt_file_path)
     for optimizer in trainer.optimizers:
       if hasattr(optimizer, 'train'):
-      optimizer.train()
+        optimizer.train()
 
   def on_test_end(self, trainer, pl_module):
     """テスト終了後にオプティマイザーをtrainモードに戻す"""
