@@ -11,6 +11,8 @@ from torch.utils.data import DataLoader
 from functools import reduce
 import operator
 import os
+if os.name == 'nt':  # Windows
+    os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 import matplotlib.pyplot as plt
 import datetime
 
