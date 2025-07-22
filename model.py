@@ -10,7 +10,7 @@ from schedulefree import RAdamScheduleFree
 torch.set_float32_matmul_precision('medium')
 
 # 3 layer fully connected network
-L1 = 1024
+L1 = 512
 L2 = 8
 L3 = 64
 
@@ -270,7 +270,7 @@ class NNUE(pl.LightningModule):
   #     child.weight.data.clamp_(-kMaxWeight, kMaxWeight)
 
   def configure_optimizers(self):
-    return RAdamScheduleFree(self.parameters(), lr=self.lr[0], weight_decay=0.5)
+    return RAdamScheduleFree(self.parameters(), lr=self.lr[0])
 
   def get_layers(self, filt):
     """
