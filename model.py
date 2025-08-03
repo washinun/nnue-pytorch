@@ -6,11 +6,12 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import sys
 import math
+torch.set_float32_matmul_precision('high')
 
 # 3 layer fully connected network
 L1 = 512
-L2 = 16
-L3 = 96
+L2 = 8
+L3 = 64
 
 class NNUE(pl.LightningModule):
   """
@@ -195,7 +196,6 @@ class NNUE(pl.LightningModule):
       optimizer_idx,
       optimizer_closure,
       on_tpu,
-      using_native_amp,
       using_lbfgs,
   ):
     # manually warm up lr without a scheduler
