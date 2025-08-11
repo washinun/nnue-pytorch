@@ -6,6 +6,8 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 import sys
 import math
+from muon import SingleDeviceMuonWithAuxAdam
+import torch.optim.lr_scheduler
 torch.set_float32_matmul_precision('high')
 
 # 3 layer fully connected network
@@ -24,8 +26,7 @@ class NNUE(pl.LightningModule):
   """
   def __init__(
       self, feature_set, lambda_=[1.0], lr=[1.0],
-      label_smoothing_eps=0.0, num_batches_warmup=10000, newbob_decay=0.5,
-      num_epochs_to_adjust_lr=500, score_scaling=361, min_newbob_scale=1e-5,
+      label_smoothing_eps=0.0, score_scaling=361,
       momentum=0.0, ply_begin_threshold=100.0, ply_end_threshold=120.0):
     super(NNUE, self).__init__()
     self.input = nn.Linear(feature_set.num_features, L1)
@@ -36,23 +37,17 @@ class NNUE(pl.LightningModule):
     self.lambda_ = lambda_
     self.lr = lr
     self.label_smoothing_eps = label_smoothing_eps
-    self.num_batches_warmup = num_batches_warmup
-    self.newbob_scale = 1.0
-    self.newbob_decay = newbob_decay
-    self.best_loss = 1e10
-    self.num_epochs_to_adjust_lr = num_epochs_to_adjust_lr
-    self.latest_loss_sum = 0.0
-    self.latest_loss_count = 0
     self.score_scaling = score_scaling
-    # Warmupを開始するステップ数
-    self.warmup_start_global_step = 0
-    self.min_newbob_scale = min_newbob_scale
     self.parameter_index = 0
     self.momentum = momentum
     self.ply_begin_threshold = ply_begin_threshold
     self.ply_end_threshold = ply_end_threshold
+    
+    # For tracking validation loss
+    self.current_val_loss = None
 
     self._zero_virtual_feature_weights()
+
 
   '''
   We zero all virtual feature weights because during serialization to .nnue
@@ -157,60 +152,77 @@ class NNUE(pl.LightningModule):
 
   def validation_step(self, batch, batch_idx):
     return self.step_(batch, batch_idx, 'val_loss')
-  
-  def validation_epoch_end(self, outputs):
-    self.latest_loss_sum += float(sum(outputs)) / len(outputs);
-    self.latest_loss_count += 1
-
-    if self.newbob_decay != 1.0 and self.current_epoch > 0 and self.current_epoch % self.num_epochs_to_adjust_lr == 0:
-      latest_loss = self.latest_loss_sum / self.latest_loss_count
-      self.latest_loss_sum = 0.0
-      self.latest_loss_count = 0
-      if latest_loss < self.best_loss:
-        self.print(f"{self.current_epoch=}, {latest_loss=} < {self.best_loss=}, accepted, {self.newbob_scale=}")
-        sys.stdout.flush()
-        self.best_loss = latest_loss
-      else:
-        self.newbob_scale *= self.newbob_decay
-        self.print(f"{self.current_epoch=}, {latest_loss=} >= {self.best_loss=}, rejected, {self.newbob_scale=}")
-        sys.stdout.flush()
-    
-    if self.newbob_scale < self.min_newbob_scale:
-      self.parameter_index += 1
-      if self.parameter_index < len(self.lr):
-        self.best_loss = 1e10
-        self.newbob_scale = 1.0
-      else:
-        self.trainer.should_stop = True
-        self.print(f"{self.current_epoch=}, early stopping")
 
   def test_step(self, batch, batch_idx):
     self.step_(batch, batch_idx, 'test_loss')
 
-  # learning rate warm-up
-  def optimizer_step(
-      self,
-      epoch,
-      batch_idx,
-      optimizer,
-      optimizer_idx,
-      optimizer_closure,
-      on_tpu,
-      using_lbfgs,
-  ):
-    # manually warm up lr without a scheduler
-    if self.trainer.global_step - self.warmup_start_global_step < self.num_batches_warmup:
-      warmup_scale = min(1.0, float(self.trainer.global_step - self.warmup_start_global_step + 1) / self.num_batches_warmup)
-    else:
-      warmup_scale = 1.0
-    for pg in optimizer.param_groups:
-      pg["lr"] = self.lr[self.parameter_index] * warmup_scale * self.newbob_scale
-      self.log("lr", pg["lr"])
+  def _setup_muon_parameters(self):
+    """Muon用のパラメータ分類"""
+    hidden_weights = []
+    hidden_gains_biases = []
+    nonhidden_params = []
+    
+    # 入力層 (特徴量埋め込み層) - 通常はAdamWで最適化
+    nonhidden_params.extend(self.input.parameters())
+    
+    # 隠れ層 - Muonで最適化
+    for layer in [self.l1, self.l2]:
+      for param in layer.parameters():
+        if param.ndim >= 2:  # 重み行列
+          hidden_weights.append(param)
+        else:  # バイアス
+          hidden_gains_biases.append(param)
+    
+    # 出力層 - AdamWで最適化
+    nonhidden_params.extend(self.output.parameters())
+    
+    return hidden_weights, hidden_gains_biases, nonhidden_params
 
-    # update params
-    optimizer.step(closure=optimizer_closure)
 
-    # clip parameters
+  def configure_optimizers(self):
+    # Muonオプティマイザーの設定
+    hidden_weights, hidden_gains_biases, nonhidden_params = self._setup_muon_parameters()
+    
+    param_groups = []
+    
+    # Muon部分（隠れ層の重み行列）
+    if len(hidden_weights) > 0:
+      param_groups.append({
+        'params': hidden_weights,
+        'use_muon': True,
+        'lr': self.lr[0] * 0.1,  # Muon用の基本学習率
+        'momentum': 0.95,         # Muonのmomentum
+        'weight_decay': 0.01,
+      })
+    
+    # AdamW部分（バイアス、入力層、出力層）
+    adamw_params = hidden_gains_biases + nonhidden_params
+    if len(adamw_params) > 0:
+      param_groups.append({
+        'params': adamw_params,
+        'use_muon': False,
+        'lr': self.lr[0] * 1e-3,  # AdamW用の基本学習率
+        'betas': (0.9, 0.95),     # AdamW用のbetas
+        'eps': 1e-10,             # AdamW用のeps
+        'weight_decay': 0.01,
+      })
+    
+    # シングルデバイス版のMuonを使用
+    optimizer = SingleDeviceMuonWithAuxAdam(param_groups)
+    
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=800, eta_min=1e-5)
+    
+    return {
+        'optimizer': optimizer,
+        'lr_scheduler': {
+            'scheduler': scheduler,
+            'interval': 'epoch',
+            'frequency': 1,
+        }
+    }
+
+  def on_train_epoch_end(self):
+    # クリッピング処理
     for child in self.children():
       if not isinstance(child, nn.Linear):
         continue
@@ -229,8 +241,11 @@ class NNUE(pl.LightningModule):
       kMaxWeight = 127.0 / kWeightScale # roughly 2.0
       child.weight.data.clamp_(-kMaxWeight, kMaxWeight)
 
-  def configure_optimizers(self):
-    return torch.optim.SGD(self.parameters(), lr=self.lr[0], momentum=self.momentum)
+    # Log learning rates to TensorBoard
+    optimizer = self.trainer.optimizers[0]
+    for i, param_group in enumerate(optimizer.param_groups):
+      group_name = f"muon_lr" if param_group.get('use_muon', False) else f"adamw_lr"
+      self.log(f'lr/{group_name}', param_group['lr'], on_epoch=True, prog_bar=True)
 
   def get_layers(self, filt):
     """

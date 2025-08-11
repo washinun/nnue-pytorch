@@ -44,6 +44,10 @@ class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
   def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
     if trainer.current_epoch == 0 or trainer.current_epoch % self.every_n_epochs != 0:
       return
+
+    # Print current validation loss
+    if hasattr(pl_module, 'current_val_loss') and pl_module.current_val_loss is not None:
+      print(f'Checkpoint at epoch {trainer.current_epoch}: val_loss = {pl_module.current_val_loss:.6f}')
     
     ckpt_file_path = os.path.join(self.log_dir, f'{trainer.current_epoch}.ckpt')
     trainer.save_checkpoint(ckpt_file_path)
@@ -66,12 +70,8 @@ def main():
   parser.add_argument("--resume-from-model", dest='resume_from_model', help="Initializes training using the weights from the given .pt model")
   parser.add_argument("--network-save-period", type=int, default=1000000000, dest='network_save_period', help="Number of epochs between network snapshots. None to disable.")
   parser.add_argument("--label-smoothing-eps", default=0.0, type=float, dest='label_smoothing_eps', help="Label smoothing eps.")
-  parser.add_argument("--num-batches-warmup", default=10000, type=int, dest='num_batches_warmup', help="Number of batches for warm-up.")
-  parser.add_argument("--newbob-decay", default=0.5, type=float, dest='newbob_decay', help="Newbob decay.")
   parser.add_argument("--epoch-size", default=10000000, type=int, dest='epoch_size', help="epoch size.")
-  parser.add_argument("--num-epochs-to-adjust-lr", default=50, type=int, dest='num_epochs_to_adjust_lr', help="Number of epochs to adjust learning rate.")
   parser.add_argument("--score-scaling", default=361, type=float, dest='score_scaling', help="Score scaling.")
-  parser.add_argument("--min-newbob-scale", default=1e-5, type=float, dest='min_newbob_scale', help="Minimum learning rate to stop the training.")
   parser.add_argument("--momentum", default=0.0, type=float, dest='momentum', help="Momentum.")
   parser.add_argument("--ply-begin-threshold", default=100.0, type=float, dest='ply_begin_threshold', help="Ply at which lambda begins to decay.")
   parser.add_argument("--ply-end-threshold", default=120.0, type=float, dest='ply_end_threshold', help="Ply at which lambda ends to decay.")
@@ -87,14 +87,14 @@ def main():
 
   if not args.resume_from_model:
     nnue = M.NNUE(
-      feature_set=feature_set, lambda_=args.lambda_,
-      lr=args.lr, label_smoothing_eps=args.label_smoothing_eps,
-      num_batches_warmup=args.num_batches_warmup,
-      newbob_decay=args.newbob_decay,
-      num_epochs_to_adjust_lr=args.num_epochs_to_adjust_lr,
+      feature_set=feature_set,
+      lambda_=args.lambda_,
+      lr=args.lr,
+      label_smoothing_eps=args.label_smoothing_eps,
       score_scaling=args.score_scaling,
-      min_newbob_scale=args.min_newbob_scale, momentum=args.momentum,
-      ply_begin_threshold=args.ply_begin_threshold, ply_end_threshold=args.ply_end_threshold)
+      momentum=args.momentum,
+      ply_begin_threshold=args.ply_begin_threshold,
+      ply_end_threshold=args.ply_end_threshold)
   else:
     nnue = M.NNUE.load_from_checkpoint(args.resume_from_model, feature_set=feature_set)
     nnue.set_feature_set(feature_set)
@@ -102,19 +102,17 @@ def main():
     # we can set the following here just like that because when resuming
     # from .pt the optimizer is only created after the training is started
     nnue.lr = args.lr
-    nnue.label_smoothing_eps=args.label_smoothing_eps
-    nnue.num_batches_warmup=args.num_batches_warmup
-    nnue.newbob_decay=args.newbob_decay
-    nnue.num_epochs_to_adjust_lr=args.num_epochs_to_adjust_lr
-    nnue.score_scaling=args.score_scaling
-    nnue.min_newbob_scale=args.min_newbob_scale
-    nnue.momentum=args.momentum
+    nnue.label_smoothing_eps = args.label_smoothing_eps
+    nnue.score_scaling = args.score_scaling
+    nnue.momentum = args.momentum
+    nnue.ply_begin_threshold = args.ply_begin_threshold
+    nnue.ply_end_threshold = args.ply_end_threshold
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
   print("Num virtual features: {}".format(feature_set.num_virtual_features))
   print("Num features: {}".format(feature_set.num_features))
-
+  
   print("Training with {} validating with {}".format(args.train, args.val))
 
   pl.seed_everything(args.seed)
