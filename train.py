@@ -55,8 +55,11 @@ def main():
   parser.add_argument("val", help="Validation data (.bin or .binpack)")
   parser = pl.Trainer.add_argparse_args(parser)
   parser.add_argument("--py-data", action="store_true", help="Use python data loader (default=False)")
-  parser.add_argument("--lambda", default=[1.0], nargs='+', type=float, dest='lambda_', help="lambda=1.0 = train on evaluations, lambda=0.0 = train on game results, interpolates between (default=1.0).")
-  parser.add_argument("--lr", default=[1.0], nargs='+', type=float, dest='lr', help="Initial learning rate.")
+  parser.add_argument("--lambda", default=1.0, type=float, dest='lambda_', help="lambda=1.0 = train on evaluations, lambda=0.0 = train on game results, interpolates between (default=1.0).")
+  parser.add_argument("--start-lambda", default=None, type=float, dest='start_lambda', help="lambda to use at first epoch.")
+  parser.add_argument("--end-lambda", default=None, type=float, dest='end_lambda', help="lambda to use at last epoch.")
+  parser.add_argument("--gamma", default=0.992, type=float, dest='gamma', help="Multiplicative factor applied to the learning rate after every epoch.")
+  parser.add_argument("--lr", default=8.75e-4, nargs='+', type=float, dest='lr', help="Initial learning rate.")
   parser.add_argument("--num-workers", default=1, type=int, dest='num_workers', help="Number of worker threads to use for data loading. Currently only works well for binpack.")
   parser.add_argument("--batch-size", default=-1, type=int, dest='batch_size', help="Number of positions per batch / per iteration. Default on GPU = 8192 on CPU = 128.")
   parser.add_argument("--threads", default=-1, type=int, dest='threads', help="Number of torch threads to use. Default automatic (cores) .")
@@ -65,16 +68,7 @@ def main():
   parser.add_argument("--random-fen-skipping", default=0, type=int, dest='random_fen_skipping', help="skip fens randomly on average random_fen_skipping before using one.")
   parser.add_argument("--resume-from-model", dest='resume_from_model', help="Initializes training using the weights from the given .pt model")
   parser.add_argument("--network-save-period", type=int, default=1000000000, dest='network_save_period', help="Number of epochs between network snapshots. None to disable.")
-  parser.add_argument("--label-smoothing-eps", default=0.0, type=float, dest='label_smoothing_eps', help="Label smoothing eps.")
-  parser.add_argument("--num-batches-warmup", default=10000, type=int, dest='num_batches_warmup', help="Number of batches for warm-up.")
-  parser.add_argument("--newbob-decay", default=0.5, type=float, dest='newbob_decay', help="Newbob decay.")
   parser.add_argument("--epoch-size", default=10000000, type=int, dest='epoch_size', help="epoch size.")
-  parser.add_argument("--num-epochs-to-adjust-lr", default=50, type=int, dest='num_epochs_to_adjust_lr', help="Number of epochs to adjust learning rate.")
-  parser.add_argument("--score-scaling", default=361, type=float, dest='score_scaling', help="Score scaling.")
-  parser.add_argument("--min-newbob-scale", default=1e-5, type=float, dest='min_newbob_scale', help="Minimum learning rate to stop the training.")
-  parser.add_argument("--momentum", default=0.0, type=float, dest='momentum', help="Momentum.")
-  parser.add_argument("--ply-begin-threshold", default=100.0, type=float, dest='ply_begin_threshold', help="Ply at which lambda begins to decay.")
-  parser.add_argument("--ply-end-threshold", default=120.0, type=float, dest='ply_end_threshold', help="Ply at which lambda ends to decay.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -85,30 +79,30 @@ def main():
 
   feature_set = features.get_feature_set_from_name(args.features)
 
+  start_lambda = args.start_lambda or args.lambda_
+  end_lambda = args.end_lambda or args.lambda_
+  max_epoch = args.max_epochs or 800
+
   if not args.resume_from_model:
     nnue = M.NNUE(
-      feature_set=feature_set, lambda_=args.lambda_,
-      lr=args.lr, label_smoothing_eps=args.label_smoothing_eps,
-      num_batches_warmup=args.num_batches_warmup,
-      newbob_decay=args.newbob_decay,
-      num_epochs_to_adjust_lr=args.num_epochs_to_adjust_lr,
-      score_scaling=args.score_scaling,
-      min_newbob_scale=args.min_newbob_scale, momentum=args.momentum,
-      ply_begin_threshold=args.ply_begin_threshold, ply_end_threshold=args.ply_end_threshold)
+      feature_set=feature_set,
+      start_lambda=start_lambda,
+      end_lambda=end_lambda,
+      max_epoch=max_epoch,
+      gamma=args.gamma,
+      lr=args.lr,
+      )
   else:
     nnue = M.NNUE.load_from_checkpoint(args.resume_from_model, feature_set=feature_set)
     nnue.set_feature_set(feature_set)
-    nnue.lambda_ = args.lambda_
+    nnue.start_lambda = start_lambda
+    nnue.end_lambda = end_lambda
+    nnue.max_epoch = max_epoch
     # we can set the following here just like that because when resuming
     # from .pt the optimizer is only created after the training is started
+    nnue.gamma = args.gamma
     nnue.lr = args.lr
-    nnue.label_smoothing_eps=args.label_smoothing_eps
-    nnue.num_batches_warmup=args.num_batches_warmup
-    nnue.newbob_decay=args.newbob_decay
-    nnue.num_epochs_to_adjust_lr=args.num_epochs_to_adjust_lr
-    nnue.score_scaling=args.score_scaling
-    nnue.min_newbob_scale=args.min_newbob_scale
-    nnue.momentum=args.momentum
+    
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
@@ -139,7 +133,7 @@ def main():
   checkpoint_callback = NetworkSaveCheckpoint(every_n_epochs=args.network_save_period, log_dir=tb_logger.log_dir)
   trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger)
 
-  main_device = 'cuda:0'
+  main_device = trainer.root_device if trainer.strategy.root_device.index is None else 'cuda:' + str(trainer.strategy.root_device.index)
 
   if args.py_data:
     print('Using python data loader')

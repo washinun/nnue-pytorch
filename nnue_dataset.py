@@ -39,8 +39,7 @@ class SparseBatch(ctypes.Structure):
         them = 1.0 - us
         outcome = torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
         score = torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
-        ply = torch.from_numpy(np.ctypeslib.as_array(self.ply, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
-        return us, them, white_indices, white_values, black_indices, black_values, outcome, score, ply
+        return us, them, white_indices, white_values, black_indices, black_values, outcome, score
 
 SparseBatchPtr = ctypes.POINTER(SparseBatch)
 

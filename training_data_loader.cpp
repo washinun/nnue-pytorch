@@ -96,15 +96,30 @@ struct HalfKP {
     }
 };
 
+int make_relkp_index(Square sq_k, int p) {
+    if (p < Eval::fe_hand_end) {
+        return p;
+    }
+    constexpr int W = 9 * 2 - 1;
+    constexpr int H = 9 * 2 - 1;
+    const int piece_index = (p - Eval::fe_hand_end) / SQ_NB;
+    const Square sq_p = static_cast<Square>((p - Eval::fe_hand_end) % SQ_NB);
+    const int relative_file = file_of(sq_p) - file_of(sq_k) + (W / 2);
+    const int relative_rank = rank_of(sq_p) - rank_of(sq_k) + (H / 2);
+    return H * W * piece_index + H * relative_file + relative_rank + Eval::fe_hand_end;
+}
+
 struct HalfKPFactorized {
     // Factorized features
     static constexpr int K_INPUTS = HalfKP::NUM_SQ;
     static constexpr int PIECE_INPUTS = HalfKP::NUM_PLANES;
-    static constexpr int INPUTS = HalfKP::INPUTS + K_INPUTS + PIECE_INPUTS;
+    static constexpr int NUN_PIECE_KINDS = (Eval::fe_end - Eval::fe_hand_end) / 81;
+    static constexpr int REL_INPUTS = NUN_PIECE_KINDS * 17 * 17 + Eval::fe_hand_end;
+    static constexpr int INPUTS = HalfKP::INPUTS + K_INPUTS + PIECE_INPUTS + REL_INPUTS;
 
     static constexpr int MAX_K_FEATURES = 1;
     static constexpr int MAX_PIECE_FEATURES = 38;
-    static constexpr int MAX_ACTIVE_FEATURES = HalfKP::MAX_ACTIVE_FEATURES + MAX_K_FEATURES + MAX_PIECE_FEATURES;
+    static constexpr int MAX_ACTIVE_FEATURES = HalfKP::MAX_ACTIVE_FEATURES + MAX_K_FEATURES + MAX_PIECE_FEATURES + MAX_PIECE_FEATURES;
 
     static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
     {
@@ -119,31 +134,36 @@ struct HalfKPFactorized {
         else {
             pieces = pos.eval_list()->piece_list_fw();
         }
-
+        PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
+        auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
         {
             // king square factor
-            PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
-            auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
             features[j] = offset + static_cast<int>(sq_target_k);
             values[j] = static_cast<float>(start_j);
             ++j;
         }
         offset += K_INPUTS;
-
-        // We order the features so that the resulting sparse
-        // tensor is coalesced. Note that we can just sort
-        // the parts where values are all 1.0f and leave the
-        // halfk feature where it was.
+        int rel_offset = offset + PIECE_INPUTS;
         int features_unordered[38];
-        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_KING; ++i) {
-            auto p = pieces[i];
-            features_unordered[i] = offset + p;
+        int rel_features[38];
+        for (PieceNumber j = PIECE_NUMBER_ZERO; j < PIECE_NUMBER_KING; ++j) {
+            auto p = pieces[j];
+            features_unordered[j] = offset + p;
+            rel_features[j] = rel_offset + make_relkp_index(sq_target_k, p);
         }
         std::sort(features_unordered, features_unordered + PIECE_NUMBER_KING);
         for (int k = 0; k < PIECE_NUMBER_KING; ++k)
         {
             features[j] = features_unordered[k];
             values[j] = 1.0f;
+            ++j;
+        }
+
+        offset += PIECE_INPUTS;
+        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_KING; ++i) {
+            auto p = pieces[i];
+            values[j] = 1.0f;
+            features[j] = offset + make_relkp_index(sq_target_k, p);
             ++j;
         }
 
@@ -262,7 +282,6 @@ struct SparseBatch
         black = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         white_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
-        ply = new float[size];
 
         num_active_white_features = 0;
         num_active_black_features = 0;
@@ -296,7 +315,6 @@ struct SparseBatch
     int* black;
     float* white_values;
     float* black_values;
-    float* ply;
 
     ~SparseBatch()
     {
@@ -307,7 +325,6 @@ struct SparseBatch
         delete[] black;
         delete[] white_values;
         delete[] black_values;
-        delete[] ply;
     }
 
 private:
@@ -318,7 +335,6 @@ private:
         is_white[i] = static_cast<float>(e.pos->side_to_move() == Color::BLACK);
         outcome[i] = (e.result + 1.0f) / 2.0f;
         score[i] = e.score;
-        ply[i] = e.ply;
         fill_features(FeatureSet<Ts...>{}, i, e);
     }
 
@@ -549,7 +565,6 @@ extern "C" {
             //movegen::forEachLegalMove(e.pos, [&](Move m){e.move = m;});
             e.move = MOVE_NONE;
             e.score = scores[i];
-            e.ply = plies[i];
             e.result = results[i];
         }
 
