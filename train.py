@@ -6,8 +6,6 @@ import pytorch_lightning as pl
 import features
 import os
 import torch
-import pytorch_lightning.callbacks
-import typing
 from torch import set_num_threads as t_set_num_threads
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import DataLoader, Dataset
@@ -31,24 +29,6 @@ def data_loader_py(train_filename, val_filename, feature_set, batch_size, main_d
   val = DataLoader(nnue_bin_dataset.NNUEBinData(val_filename, feature_set), batch_size=32)
   return train, val
 
-
-class NetworkSaveCheckpoint(pytorch_lightning.callbacks.Checkpoint):
-  def __init__(
-      self,
-      every_n_epochs: int,
-      log_dir: str,
-  ):
-    self.every_n_epochs = every_n_epochs
-    self.log_dir = log_dir
-  
-  def on_validation_end(self, trainer: 'pl.Trainer', pl_module: 'pl.LightningModule') -> None:
-    if trainer.current_epoch == 0 or trainer.current_epoch % self.every_n_epochs != 0:
-      return
-    
-    ckpt_file_path = os.path.join(self.log_dir, f'{trainer.current_epoch}.ckpt')
-    trainer.save_checkpoint(ckpt_file_path)
-
-
 def main():
   parser = argparse.ArgumentParser(description="Trains the network.")
   parser.add_argument("train", help="Training data (.bin or .binpack)")
@@ -59,7 +39,7 @@ def main():
   parser.add_argument("--start-lambda", default=None, type=float, dest='start_lambda', help="lambda to use at first epoch.")
   parser.add_argument("--end-lambda", default=None, type=float, dest='end_lambda', help="lambda to use at last epoch.")
   parser.add_argument("--gamma", default=0.992, type=float, dest='gamma', help="Multiplicative factor applied to the learning rate after every epoch.")
-  parser.add_argument("--lr", default=8.75e-4, nargs='+', type=float, dest='lr', help="Initial learning rate.")
+  parser.add_argument("--lr", default=8.75e-4, type=float, dest='lr', help="Initial learning rate.")
   parser.add_argument("--num-workers", default=1, type=int, dest='num_workers', help="Number of worker threads to use for data loading. Currently only works well for binpack.")
   parser.add_argument("--batch-size", default=-1, type=int, dest='batch_size', help="Number of positions per batch / per iteration. Default on GPU = 8192 on CPU = 128.")
   parser.add_argument("--threads", default=-1, type=int, dest='threads', help="Number of torch threads to use. Default automatic (cores) .")
@@ -67,8 +47,11 @@ def main():
   parser.add_argument("--smart-fen-skipping", action='store_true', dest='smart_fen_skipping', help="If enabled positions that are bad training targets will be skipped during loading. Default: False")
   parser.add_argument("--random-fen-skipping", default=0, type=int, dest='random_fen_skipping', help="skip fens randomly on average random_fen_skipping before using one.")
   parser.add_argument("--resume-from-model", dest='resume_from_model', help="Initializes training using the weights from the given .pt model")
-  parser.add_argument("--network-save-period", type=int, default=1000000000, dest='network_save_period', help="Number of epochs between network snapshots. None to disable.")
-  parser.add_argument("--epoch-size", default=10000000, type=int, dest='epoch_size', help="epoch size.")
+  parser.add_argument("--epoch-size", default=1000000, type=int, dest='epoch_size', help="epoch size.")
+  parser.add_argument("--in-scaling", default=240, type=int, dest='in_scaling', help="in-scaling.")
+  parser.add_argument("--out-scaling", default=280, type=int, dest='out_scaling', help="out-scaling.")
+  parser.add_argument("--offset", default=270, type=int, dest='offset', help="offset.")
+  parser.add_argument("--adjust-loss", default=0.1, type=float, dest='adjust_loss', help="adjust loss.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
@@ -82,19 +65,26 @@ def main():
   start_lambda = args.start_lambda or args.lambda_
   end_lambda = args.end_lambda or args.lambda_
   max_epoch = args.max_epochs or 800
-
-  if not args.resume_from_model:
-    nnue = M.NNUE(
-      feature_set=feature_set,
+  if args.resume_from_model is None:
+    nnue = M.NNUE(feature_set=feature_set,
       start_lambda=start_lambda,
-      end_lambda=end_lambda,
       max_epoch=max_epoch,
+      end_lambda=end_lambda,
       gamma=args.gamma,
       lr=args.lr,
-      )
+      epoch_size=args.epoch_size,
+      batch_size=args.batch_size,
+      in_scaling=args.in_scaling,
+      out_scaling=args.out_scaling,
+      offset=args.offset,
+      adjust_loss=args.adjust_loss)
   else:
-    nnue = M.NNUE.load_from_checkpoint(args.resume_from_model, feature_set=feature_set)
+    nnue = torch.load(args.resume_from_model)
     nnue.set_feature_set(feature_set)
+    nnue.in_scaling = args.in_scaling
+    nnue.out_scaling = args.out_scaling
+    nnue.offset = args.offset
+    nnue.adjust_loss = args.adjust_loss
     nnue.start_lambda = start_lambda
     nnue.end_lambda = end_lambda
     nnue.max_epoch = max_epoch
@@ -102,7 +92,6 @@ def main():
     # from .pt the optimizer is only created after the training is started
     nnue.gamma = args.gamma
     nnue.lr = args.lr
-    
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
@@ -130,7 +119,7 @@ def main():
   print('Using log dir {}'.format(logdir), flush=True)
 
   tb_logger = pl_loggers.TensorBoardLogger(logdir)
-  checkpoint_callback = NetworkSaveCheckpoint(every_n_epochs=args.network_save_period, log_dir=tb_logger.log_dir)
+  checkpoint_callback = pl.callbacks.ModelCheckpoint(save_last=True)
   trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger)
 
   main_device = trainer.root_device if trainer.strategy.root_device.index is None else 'cuda:' + str(trainer.strategy.root_device.index)
@@ -143,11 +132,6 @@ def main():
     train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, main_device, args.epoch_size)
 
   trainer.fit(nnue, train, val)
-
-  print(f'tb_logger.log_dir={tb_logger.log_dir}')
-  ckpt_file_path = os.path.join(tb_logger.log_dir, 'final.ckpt')
-  trainer.save_checkpoint(ckpt_file_path)
-
 
 if __name__ == '__main__':
   main()

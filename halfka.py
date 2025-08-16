@@ -4,12 +4,15 @@ import feature_block
 from collections import OrderedDict
 from feature_block import *
 
-NUM_SQ = 64
-NUM_PT = 12
-NUM_PLANES = (NUM_SQ * NUM_PT + 1)
+NUM_SQ = 81
+#NUM_PT = 12
+#NUM_PLANES = 1629
+NUM_PLANES = 1629 + 81
+NUM_PLANES_FACT = NUM_PLANES
+REL_FEATURES = 5870
 
 def orient(is_white_pov: bool, sq: int):
-  return (56 * (not is_white_pov)) ^ sq
+  return (63 * (not is_white_pov)) ^ sq
 
 def halfka_idx(is_white_pov: bool, king_sq: int, sq: int, p: chess.Piece):
   p_idx = (p.piece_type - 1) * 2 + (p.color != is_white_pov)
@@ -29,7 +32,7 @@ class Features(FeatureBlock):
 
 class FactorizedFeatures(FeatureBlock):
   def __init__(self):
-    super(FactorizedFeatures, self).__init__('HalfKA^', 0x5f134cb8, OrderedDict([('HalfKA', NUM_PLANES * NUM_SQ), ('A', NUM_SQ * NUM_PT)]))
+    super(FactorizedFeatures, self).__init__('HalfKA^', 0x5f134cb8, OrderedDict([('HalfKA', NUM_PLANES * NUM_SQ), ('A', NUM_PLANES_FACT), ('HalfRelKA', REL_FEATURES)]))
 
   def get_active_features(self, board: chess.Board):
     raise Exception('Not supported yet, you must use the c++ data loader for factorizer support during training')
@@ -38,10 +41,20 @@ class FactorizedFeatures(FeatureBlock):
     if idx >= self.num_real_features:
       raise Exception('Feature must be real')
 
-    a_idx = idx % NUM_PLANES - 1
+    k_idx = idx // NUM_PLANES
+    a_idx = idx % NUM_PLANES
+    def _make_relka_index(sq_k, p):
+      if p < 90:
+        return p
+      w = 9 * 2 - 1
+      h = 9 * 2 - 1
+      piece_index = (p - 90) // 81
+      sq_p = (p - 90) % 81
+      relative_file = (sq_p // 9) - (sq_k // 9) + (w // 2)
+      relative_rank = (sq_p % 9) - (sq_k % 9) + (h // 2)
+      return int(h * w * piece_index + h * relative_file + relative_rank + 90)
 
-    return [idx, self.get_factor_base_feature('A') + a_idx]
-
+    return [idx, self.get_factor_base_feature('A') + a_idx, self.get_factor_base_feature('HalfRelKA') + _make_relka_index(k_idx, a_idx)]
 '''
 This is used by the features module for discovery of feature blocks.
 '''

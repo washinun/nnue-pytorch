@@ -79,18 +79,10 @@ struct HalfKP {
         PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
         auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
 
-        // We order the features so that the resulting sparse
-        // tensor is coalesced.
-        int features_unordered[38];
         for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_KING; ++i) {
             auto p = pieces[i];
-            features_unordered[i] = static_cast<int>(Eval::fe_end) * static_cast<int>(sq_target_k) + p;
-        }
-        std::sort(features_unordered, features_unordered + PIECE_NUMBER_KING);
-        for (int k = 0; k < PIECE_NUMBER_KING; ++k)
-        {
-            features[k] = features_unordered[k];
-            values[k] = 1.0f;
+            values[i] = 1.0f;
+            features[i] = static_cast<int>(Eval::fe_end) * static_cast<int>(sq_target_k) + p;
         }
         return { PIECE_NUMBER_KING, INPUTS };
     }
@@ -124,8 +116,7 @@ struct HalfKPFactorized {
     static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
     {
         auto [start_j, offset] = HalfKP::fill_features_sparse(e, features, values, color);
-        int j = start_j;
-
+        auto j = start_j;
         auto& pos = *e.pos;
         Eval::BonaPiece* pieces = nullptr;
         if (color == Color::BLACK) {
@@ -137,28 +128,17 @@ struct HalfKPFactorized {
         PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
         auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
         {
-            // king square factor
             features[j] = offset + static_cast<int>(sq_target_k);
             values[j] = static_cast<float>(start_j);
             ++j;
         }
         offset += K_INPUTS;
-        int rel_offset = offset + PIECE_INPUTS;
-        int features_unordered[38];
-        int rel_features[38];
-        for (PieceNumber j = PIECE_NUMBER_ZERO; j < PIECE_NUMBER_KING; ++j) {
-            auto p = pieces[j];
-            features_unordered[j] = offset + p;
-            rel_features[j] = rel_offset + make_relkp_index(sq_target_k, p);
-        }
-        std::sort(features_unordered, features_unordered + PIECE_NUMBER_KING);
-        for (int k = 0; k < PIECE_NUMBER_KING; ++k)
-        {
-            features[j] = features_unordered[k];
+        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_KING; ++i) {
+            auto p = pieces[i];
             values[j] = 1.0f;
+            features[j] = offset + p;
             ++j;
         }
-
         offset += PIECE_INPUTS;
         for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_KING; ++i) {
             auto p = pieces[i];
@@ -166,91 +146,79 @@ struct HalfKPFactorized {
             features[j] = offset + make_relkp_index(sq_target_k, p);
             ++j;
         }
-
         return { j, INPUTS };
     }
 };
 
-// struct HalfKA {
-//     static constexpr int NUM_SQ = 64;
-//     static constexpr int NUM_PT = 12;
-//     static constexpr int NUM_PLANES = (NUM_SQ * NUM_PT + 1);
-//     static constexpr int INPUTS = NUM_PLANES * NUM_SQ;
+struct HalfKA {
+    static constexpr int NUM_SQ = 81;
+    static constexpr int NUM_PLANES = 1548 + 81 * 2;
+    static constexpr int INPUTS = NUM_PLANES * NUM_SQ;
 
-//     static constexpr int MAX_ACTIVE_FEATURES = 32;
+    static constexpr int MAX_ACTIVE_FEATURES = 40;
 
-//     static int feature_index(Color color, Square ksq, Square sq, Piece p)
-//     {
-//         auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
-//         return 1 + static_cast<int>(orient_flip(color, sq)) + p_idx * NUM_SQ + static_cast<int>(ksq) * NUM_PLANES;
-//     }
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
+    {
+        auto& pos = *e.pos;
+        Eval::BonaPiece* pieces = nullptr;
+        if (color == Color::BLACK) {
+            pieces = pos.eval_list()->piece_list_fb();
+        }
+        else {
+            pieces = pos.eval_list()->piece_list_fw();
+        }
+        PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
+        auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
 
-//     static int fill_features_sparse(int i, const TrainingDataEntry& e, int* features, float* values, int& counter, Color color)
-//     {
-//         auto& pos = e.pos;
-//         auto pieces = pos.piecesBB();
-//         auto ksq = pos.kingSquare(color);
+        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_NB; ++i) {
+            auto p = pieces[i];
+            values[i] = 1.0f;
+            features[i] = static_cast<int>(Eval::fe_end) * static_cast<int>(sq_target_k) + p;
+        }
+        return { PIECE_NUMBER_NB, INPUTS };
+    }
+};
 
-//         // We order the features so that the resulting sparse
-//         // tensor is coalesced.
-//         int features_unordered[32];
-//         int j = 0;
-//         for(Square sq : pieces)
-//         {
-//             auto p = pos.pieceAt(sq);
-//             features_unordered[j++] = feature_index(color, orient_flip(color, ksq), sq, p);
-//         }
-//         std::sort(features_unordered, features_unordered + j);
-//         for (int k = 0; k < j; ++k)
-//         {
-//             int idx = counter * 2;
-//             features[idx] = i;
-//             features[idx + 1] = features_unordered[k];
-//             values[counter] = 1.0f;
-//             counter += 1;
-//         }
-//         return INPUTS;
-//     }
-// };
+struct HalfKAFactorized {
+    // Factorized features
+    static constexpr int PIECE_INPUTS = HalfKA::NUM_PLANES;
+    static constexpr int NUN_PIECE_KINDS = (Eval::fe_end2 - Eval::fe_hand_end) / 81;
+    static constexpr int REL_INPUTS = NUN_PIECE_KINDS * 17 * 17 + Eval::fe_hand_end;
+    static constexpr int INPUTS = HalfKA::INPUTS + PIECE_INPUTS + REL_INPUTS;
 
-// struct HalfKAFactorized {
-//     // Factorized features
-//     static constexpr int PIECE_INPUTS = HalfKA::NUM_SQ * HalfKA::NUM_PT;
-//     static constexpr int INPUTS = HalfKA::INPUTS + PIECE_INPUTS;
+    static constexpr int MAX_PIECE_FEATURES = 40;
+    static constexpr int MAX_ACTIVE_FEATURES = HalfKA::MAX_ACTIVE_FEATURES + MAX_PIECE_FEATURES + MAX_PIECE_FEATURES;
 
-//     static constexpr int MAX_PIECE_FEATURES = 32;
-//     static constexpr int MAX_ACTIVE_FEATURES = HalfKA::MAX_ACTIVE_FEATURES + MAX_PIECE_FEATURES;
-
-//     static void fill_features_sparse(int i, const TrainingDataEntry& e, int* features, float* values, int& counter, Color color)
-//     {
-//         auto counter_before = counter;
-//         int offset = HalfKA::fill_features_sparse(i, e, features, values, counter, color);
-//         auto& pos = e.pos;
-//         auto pieces = pos.piecesBB();
-
-//         // We order the features so that the resulting sparse
-//         // tensor is coalesced. Note that we can just sort
-//         // the parts where values are all 1.0f and leave the
-//         // halfk feature where it was.
-//         int features_unordered[32];
-//         int j = 0;
-//         for(Square sq : pieces)
-//         {
-//             auto p = pos.pieceAt(sq);
-//             auto p_idx = static_cast<int>(p.type()) * 2 + (p.color() != color);
-//             features_unordered[j++] = offset + (p_idx * HalfKA::NUM_SQ) + static_cast<int>(orient_flip(color, sq));
-//         }
-//         std::sort(features_unordered, features_unordered + j);
-//         for (int k = 0; k < j; ++k)
-//         {
-//             int idx = counter * 2;
-//             features[idx] = i;
-//             features[idx + 1] = features_unordered[k];
-//             values[counter] = 1.0f;
-//             counter += 1;
-//         }
-//     }
-// };
+    static std::pair<int, int> fill_features_sparse(const TrainingDataEntry& e, int* features, float* values, Color color)
+    {
+        auto [start_j, offset] = HalfKA::fill_features_sparse(e, features, values, color);
+        auto j = start_j;
+        auto& pos = *e.pos;
+        Eval::BonaPiece* pieces = nullptr;
+        if (color == Color::BLACK) {
+            pieces = pos.eval_list()->piece_list_fb();
+        }
+        else {
+            pieces = pos.eval_list()->piece_list_fw();
+        }
+        PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
+        auto sq_target_k = static_cast<Square>((pieces[target] - Eval::BonaPiece::f_king) % SQ_NB);
+        offset += PIECE_INPUTS;
+        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_NB; ++i) {
+            auto p = pieces[i];
+            values[j] = 1.0f;
+            features[j] = offset + p;
+            ++j;
+        }
+        for (PieceNumber i = PIECE_NUMBER_ZERO; i < PIECE_NUMBER_NB; ++i) {
+            auto p = pieces[i];
+            values[j] = 1.0f;
+            features[j] = offset + make_relkp_index(sq_target_k, p);
+            ++j;
+        }
+        return { j, INPUTS };
+    }
+};
 
 template <typename T, typename... Ts>
 struct FeatureSet
@@ -282,6 +250,7 @@ struct SparseBatch
         black = new int[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         white_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
+        layer_stack_indices = new int[size];
 
         num_active_white_features = 0;
         num_active_black_features = 0;
@@ -315,6 +284,7 @@ struct SparseBatch
     int* black;
     float* white_values;
     float* black_values;
+    int* layer_stack_indices;
 
     ~SparseBatch()
     {
@@ -325,6 +295,7 @@ struct SparseBatch
         delete[] black;
         delete[] white_values;
         delete[] black_values;
+        delete[] layer_stack_indices;
     }
 
 private:
@@ -335,6 +306,7 @@ private:
         is_white[i] = static_cast<float>(e.pos->side_to_move() == Color::BLACK);
         outcome[i] = (e.result + 1.0f) / 2.0f;
         score[i] = e.score;
+        layer_stack_indices[i] = e.pos->stack_index();
         fill_features(FeatureSet<Ts...>{}, i, e);
     }
 
@@ -532,7 +504,7 @@ static void EnsureInitialize()
     initialized = true;
 
     USI::init(Options);
-    //Bitboards::init();
+    Bitboards::init();
     //Position::init();
     //Search::init();
 
@@ -577,19 +549,19 @@ extern "C" {
         {
             return new SparseBatch(FeatureSet<HalfKPFactorized>{}, entries);
         }
-        // else if (feature_set == "HalfKA")
-        // {
-        //     return new SparseBatch(FeatureSet<HalfKA>{}, entries);
-        // }
-        // else if (feature_set == "HalfKA^")
-        // {
-        //     return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
-        // }
+        else if (feature_set == "HalfKA")
+        {
+            return new SparseBatch(FeatureSet<HalfKA>{}, entries);
+        }
+        else if (feature_set == "HalfKA^")
+        {
+            return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
+        }
         fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
         return nullptr;
     }
 
-    EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, const char* filename, int batch_size, bool cyclic, bool filtered, int random_fen_skipping)
+    EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, const char* filename, int batch_size, int cyclic, int filtered, int random_fen_skipping)
     {
         EnsureInitialize();
 
@@ -626,14 +598,14 @@ extern "C" {
         {
             return new FeaturedBatchStream<FeatureSet<HalfKPFactorized>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
         }
-        // else if (feature_set == "HalfKA")
-        // {
-        //     return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
-        // }
-        // else if (feature_set == "HalfKA^")
-        // {
-        //     return new FeaturedBatchStream<FeatureSet<HalfKAFactorized>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
-        // }
+        else if (feature_set == "HalfKA")
+        {
+            return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
+        }
+        else if (feature_set == "HalfKA^")
+        {
+            return new FeaturedBatchStream<FeatureSet<HalfKAFactorized>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
+        }
         fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
         return nullptr;
     }

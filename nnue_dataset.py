@@ -27,7 +27,7 @@ class SparseBatch(ctypes.Structure):
         ('black', ctypes.POINTER(ctypes.c_int)),
         ('white_values', ctypes.POINTER(ctypes.c_float)),
         ('black_values', ctypes.POINTER(ctypes.c_float)),
-        ('ply', ctypes.POINTER(ctypes.c_float)),
+        ('layer_stack_indices', ctypes.POINTER(ctypes.c_int)),
     ]
 
     def get_tensors(self, device):
@@ -39,7 +39,8 @@ class SparseBatch(ctypes.Structure):
         them = 1.0 - us
         outcome = torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
         score = torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
-        return us, them, white_indices, white_values, black_indices, black_values, outcome, score
+        layer_stack_indices = torch.from_numpy(np.ctypeslib.as_array(self.layer_stack_indices, shape=(self.size,))).long().pin_memory().to(device=device, non_blocking=True)
+        return us, them, white_indices, white_values, black_indices, black_values, outcome, score, layer_stack_indices
 
 SparseBatchPtr = ctypes.POINTER(SparseBatch)
 
@@ -95,7 +96,7 @@ class TrainingDataProvider:
 
 create_sparse_batch_stream = dll.create_sparse_batch_stream
 create_sparse_batch_stream.restype = ctypes.c_void_p
-create_sparse_batch_stream.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
+create_sparse_batch_stream.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_int, ctypes.c_int]
 destroy_sparse_batch_stream = dll.destroy_sparse_batch_stream
 destroy_sparse_batch_stream.argtypes = [ctypes.c_void_p]
 
