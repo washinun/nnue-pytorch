@@ -192,8 +192,8 @@ struct HalfKA {
 
     static constexpr int MAX_ACTIVE_FEATURES = 40;
 
-     static int fill_features_sparse(int i, const TrainingDataEntry& e, int* features, float* values, int& counter, Color color)
-     {
+    static int fill_features_sparse(int i, const TrainingDataEntry& e, int* features, float* values, int& counter, Color color)
+    {
         auto& pos = *e.pos;
         Eval::BonaPiece* pieces = nullptr;
         if (color == Color::BLACK) {
@@ -218,7 +218,7 @@ struct HalfKA {
 #else
             features_unordered[i] = static_cast<int>(Eval::fe_end2) * static_cast<int>(sq_target_k) + p;
 #endif
-            
+
         }
         std::sort(features_unordered, features_unordered + PIECE_NUMBER_NB);
         for (int k = 0; k < PIECE_NUMBER_NB; ++k) {
@@ -234,7 +234,7 @@ struct HalfKA {
 
 struct HalfKAFactorized {
     // Factorized features
-    static constexpr int PIECE_INPUTS = HalfKA::NUM_PLANES ;
+    static constexpr int PIECE_INPUTS = HalfKA::NUM_PLANES;
     static constexpr int NUN_PIECE_KINDS = (Eval::fe_end2 - Eval::fe_hand_end) / 81;
     static constexpr int REL_INPUTS = NUN_PIECE_KINDS * 17 * 17 + Eval::fe_hand_end;
     static constexpr int INPUTS = HalfKA::INPUTS + PIECE_INPUTS + REL_INPUTS;
@@ -251,7 +251,8 @@ struct HalfKAFactorized {
         Eval::BonaPiece* pieces = nullptr;
         if (color == Color::BLACK) {
             pieces = pos.eval_list()->piece_list_fb();
-        } else {
+        }
+        else {
             pieces = pos.eval_list()->piece_list_fw();
         }
         PieceNumber target = static_cast<PieceNumber>(PIECE_NUMBER_KING + color);
@@ -319,7 +320,6 @@ struct SparseBatch
         white_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         black_values = new float[size * FeatureSet<Ts...>::MAX_ACTIVE_FEATURES];
         layer_stack_indices = new int[size];
-        ply = new float[size];
 
         num_active_white_features = 0;
         num_active_black_features = 0;
@@ -346,7 +346,6 @@ struct SparseBatch
     float* white_values;
     float* black_values;
     int* layer_stack_indices;
-    float* ply;
 
     ~SparseBatch()
     {
@@ -358,7 +357,6 @@ struct SparseBatch
         delete[] white_values;
         delete[] black_values;
         delete[] layer_stack_indices;
-        delete[] ply;
     }
 
 private:
@@ -370,7 +368,6 @@ private:
         outcome[i] = (e.result + 1.0f) / 2.0f;
         score[i] = e.score;
         layer_stack_indices[i] = e.pos->stack_index();
-        ply[i] = e.ply;
         fill_features(FeatureSet<Ts...>{}, i, e);
     }
 
@@ -451,39 +448,39 @@ struct FeaturedBatchStream : Stream<StorageT>
         m_stop_flag.store(false);
 
         auto worker = [this]()
-        {
-            std::vector<TrainingDataEntry> entries;
-            entries.reserve(m_batch_size);
-
-            while (!m_stop_flag.load())
             {
-                entries.clear();
+                std::vector<TrainingDataEntry> entries;
+                entries.reserve(m_batch_size);
 
+                while (!m_stop_flag.load())
                 {
-                    std::unique_lock lock(m_stream_mutex);
-                    BaseType::m_stream->fill(entries, m_batch_size);
-                    if (entries.empty())
+                    entries.clear();
+
                     {
-                        break;
+                        std::unique_lock lock(m_stream_mutex);
+                        BaseType::m_stream->fill(entries, m_batch_size);
+                        if (entries.empty())
+                        {
+                            break;
+                        }
                     }
+
+                    auto batch = new StorageT(FeatureSet{}, entries);
+
+                    {
+                        std::unique_lock lock(m_batch_mutex);
+                        m_batches_not_full.wait(lock, [this]() { return m_batches.size() < m_concurrency + 1 || m_stop_flag.load(); });
+
+                        m_batches.emplace_back(batch);
+
+                        lock.unlock();
+                        m_batches_any.notify_one();
+                    }
+
                 }
-
-                auto batch = new StorageT(FeatureSet{}, entries);
-
-                {
-                    std::unique_lock lock(m_batch_mutex);
-                    m_batches_not_full.wait(lock, [this]() { return m_batches.size() < m_concurrency + 1 || m_stop_flag.load(); });
-
-                    m_batches.emplace_back(batch);
-
-                    lock.unlock();
-                    m_batches_any.notify_one();
-                }
-
-            }
-            m_num_workers.fetch_sub(1);
-            m_batches_any.notify_one();
-        };
+                m_num_workers.fetch_sub(1);
+                m_batches_any.notify_one();
+            };
 
         const int num_feature_threads = std::max(
             1,
@@ -611,11 +608,11 @@ extern "C" {
         }
         else if (feature_set == "HalfKA")
         {
-             return new SparseBatch(FeatureSet<HalfKA>{}, entries);
+            return new SparseBatch(FeatureSet<HalfKA>{}, entries);
         }
         else if (feature_set == "HalfKA^")
         {
-             return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
+            return new SparseBatch(FeatureSet<HalfKAFactorized>{}, entries);
         }
         fprintf(stderr, "Unknown feature_set %s\n", feature_set_c);
         return nullptr;
@@ -630,22 +627,22 @@ extern "C" {
         {
             skipPredicate = [
                 random_fen_skipping,
-                    prob = double(random_fen_skipping) / (random_fen_skipping + 1),
-                    filtered
-            ](const TrainingDataEntry& e){
+                prob = double(random_fen_skipping) / (random_fen_skipping + 1),
+                filtered
+            ](const TrainingDataEntry& e) {
 
-                    auto do_skip = [&]() {
-                        std::bernoulli_distribution distrib(prob);
-                        auto& prng = rng::get_thread_local_rng();
-                        return distrib(prng);
+                auto do_skip = [&]() {
+                    std::bernoulli_distribution distrib(prob);
+                    auto& prng = rng::get_thread_local_rng();
+                    return distrib(prng);
                     };
 
-                    auto do_filter = [&]() {
-                        return (e.isCapturingMove() || e.isInCheck());
+                auto do_filter = [&]() {
+                    return (e.isCapturingMove() || e.isInCheck());
                     };
 
-                    static thread_local std::mt19937 gen(std::random_device{}());
-                    return (random_fen_skipping && do_skip()) || (filtered && do_filter());
+                static thread_local std::mt19937 gen(std::random_device{}());
+                return (random_fen_skipping && do_skip()) || (filtered && do_filter());
                 };
         }
 
@@ -660,7 +657,7 @@ extern "C" {
         }
         else if (feature_set == "HalfKA")
         {
-             return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
+            return new FeaturedBatchStream<FeatureSet<HalfKA>, SparseBatch>(concurrency, filename, batch_size, cyclic, skipPredicate);
         }
         else if (feature_set == "HalfKA^")
         {
