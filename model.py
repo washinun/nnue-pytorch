@@ -6,6 +6,7 @@ from torch import nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import sys
+from feature_transformer import DoubleFeatureTransformerSlice
 
 # 3 layer fully connected network
 L1 = 1536
@@ -15,9 +16,9 @@ L3 = 64
 def coalesce_ft_weights(model, layer):
   weight = layer.weight.data
   indices = model.feature_set.get_virtual_to_real_features_gather_indices()
-  weight_coalesced = weight.new_zeros((weight.shape[0], model.feature_set.num_real_features))
+  weight_coalesced = weight.new_zeros((model.feature_set.num_real_features, weight.shape[1]))
   for i_real, is_virtual in enumerate(indices):
-    weight_coalesced[:, i_real] = sum(weight[:, i_virtual] for i_virtual in is_virtual)
+    weight_coalesced[i_real, :] = sum(weight[i_virtual, :] for i_virtual in is_virtual)
   return weight_coalesced
 
 def get_parameters(layers):
@@ -133,7 +134,7 @@ class NNUE(pl.LightningModule):
 
     super(NNUE, self).__init__()
     self.num_ls_buckets = 4
-    self.input = nn.Linear(feature_set.num_features, L1)
+    self.input = DoubleFeatureTransformerSlice(feature_set.num_features, L1)
     self.feature_set = feature_set
     self.layer_stacks = LayerStacks(self.num_ls_buckets)
     self.start_lambda = start_lambda
@@ -175,7 +176,7 @@ class NNUE(pl.LightningModule):
     weights = self.input.weight
     with torch.no_grad():
       for a, b in self.feature_set.get_virtual_feature_ranges():
-        weights[:, a:b] = 0.0
+        weights[a:b, :] = 0.0
     self.input.weight = nn.Parameter(weights)
 
   '''
@@ -240,16 +241,15 @@ class NNUE(pl.LightningModule):
     if old_feature_block.name == next(iter(new_feature_block.factors)):
       # We can just extend with zeros since it's unfactorized -> factorized
       weights = self.input.weight
-      padding = weights.new_zeros((weights.shape[0], new_feature_block.num_virtual_features))
-      weights = torch.cat([weights, padding], dim=1)
+      padding = weights.new_zeros((new_feature_block.num_virtual_features, weights.shape[1]))
+      weights = torch.cat([weights, padding], dim=0)
       self.input.weight = nn.Parameter(weights)
       self.feature_set = new_feature_set
     else:
       raise Exception('Cannot change feature set from {} to {}.'.format(self.feature_set.name, new_feature_set.name))
 
-  def forward(self, us, them, w_in, b_in, layer_stack_indices):
-    w = self.input(w_in)
-    b = self.input(b_in)
+  def forward(self, us, them, white_indices, white_values, black_indices, black_values, layer_stack_indices):
+    w, b = self.input(white_indices, white_values, black_indices, black_values)
     l0_ = (us * torch.cat([w, b], dim=1)) + (them * torch.cat([b, w], dim=1))
     # clamp here is used as a clipped relu to (0.0, 1.0)
     l0_ = torch.clamp(l0_, 0.0, 1.0)
@@ -263,7 +263,7 @@ class NNUE(pl.LightningModule):
 
   def step_(self, batch, batch_idx, loss_type):
     self._clip_weights()
-    us, them, white, black, outcome, score, layer_stack_indices = batch
+    us, them, white_indices, white_values, black_indices, black_values, outcome, score, layer_stack_indices = batch
 
     # convert the network and search scores to an estimate match result
     # based on the win_rate_model, with scalings and offsets optimized
@@ -271,7 +271,7 @@ class NNUE(pl.LightningModule):
     out_scaling = self.out_scaling
     offset = self.offset
 
-    scorenet = self(us, them, white, black, layer_stack_indices) * self.nnue2score
+    scorenet = self(us, them, white_indices, white_values, black_indices, black_values, layer_stack_indices) * self.nnue2score
     q  = ( scorenet - offset) / in_scaling  # used to compute the chance of a win
     qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
     qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
@@ -297,6 +297,9 @@ class NNUE(pl.LightningModule):
 
   def training_step(self, batch, batch_idx):
     return self.step_(batch, batch_idx, 'train_loss')
+
+  def validation_step(self, batch, batch_idx):
+    return self.step_(batch, batch_idx, 'val_loss')
 
   def test_step(self, batch, batch_idx):
     self.step_(batch, batch_idx, 'test_loss')
@@ -340,7 +343,6 @@ class NNUE(pl.LightningModule):
     """
     for i in self.children():
       if filt(i):
-        if isinstance(i, nn.Linear):
-          for p in i.parameters():
-            if p.requires_grad:
-              yield p
+        for p in i.parameters():
+          if p.requires_grad:
+            yield p

@@ -93,6 +93,8 @@ def main():
     nnue.gamma = args.gamma
     nnue.lr = args.lr
 
+  torch.backends.cuda.matmul.allow_tf32 = True
+
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
   print("Num virtual features: {}".format(feature_set.num_virtual_features))
