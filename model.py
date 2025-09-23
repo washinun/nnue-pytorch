@@ -44,8 +44,8 @@ class NNUE(pl.LightningModule):
       lr=8.75e-4,
       epoch_size=100_000_000, 
       batch_size=16384, 
-      in_scaling=340, 
-      out_scaling=380, 
+      in_scaling=511, 
+      out_scaling=511, 
       offset=270, 
       adjust_loss=0.1
       ):
