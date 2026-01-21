@@ -75,15 +75,6 @@ class NNUEWriter():
     description += b"(ClippedReLU[256](AffineTransform[256<-512](InputSlice[512(0:512)])))))"
     self.int32(len(description)) # Network definition
     self.buf.extend(description)
-
-  def coalesce_ft_weights(self, model, layer):
-    weight = layer.weight.data
-    indices = model.feature_set.get_virtual_to_real_features_gather_indices()
-    weight_coalesced = weight.new_zeros((weight.shape[0], model.feature_set.num_real_features))
-    for i_real, is_virtual in enumerate(indices):
-      weight_coalesced[:, i_real] = sum(weight[:, i_virtual] for i_virtual in is_virtual)
-
-    return weight_coalesced
   
   def save_histogram(self, file_name, data, xlabel, ylabel, title):
     fig, ax = plt.subplots()
@@ -115,7 +106,7 @@ class NNUEWriter():
     self.buf.extend(bias.flatten().numpy().tobytes())
 
     print(datetime.datetime.now())
-    weight = self.coalesce_ft_weights(model, layer)
+    weight = M.coalesce_ft_weights(model, layer)
     weight = weight.mul(127).round().to(torch.int16)
     ascii_hist('ft weight:', weight.numpy())
     self.save_histogram(f'{self.figure_index:02}_feature_transformer_weight.png', weight, 'weight', 'frequency', 'feature transformer weight')
