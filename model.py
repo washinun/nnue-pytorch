@@ -15,9 +15,9 @@ L3 = 64
 def coalesce_ft_weights(model, layer):
   weight = layer.weight.data
   indices = model.feature_set.get_virtual_to_real_features_gather_indices()
-  weight_coalesced = weight.new_zeros((model.feature_set.num_real_features, weight.shape[1]))
+  weight_coalesced = weight.new_zeros((weight.shape[0], model.feature_set.num_real_features))
   for i_real, is_virtual in enumerate(indices):
-    weight_coalesced[i_real, :] = sum(weight[i_virtual, :] for i_virtual in is_virtual)
+    weight_coalesced[:, i_real] = sum(weight[:, i_virtual] for i_virtual in is_virtual)
   return weight_coalesced
 
 def get_parameters(layers):
@@ -183,7 +183,7 @@ class NNUE(pl.LightningModule):
     out_scaling = self.out_scaling
     offset = self.offset
 
-    scorenet = self(us, them, white_indices, white_values, black_indices, black_values) * self.nnue2score
+    scorenet = self(us, them, white, black) * self.nnue2score
     q  = ( scorenet - offset) / in_scaling  # used to compute the chance of a win
     qm = (-scorenet - offset) / in_scaling  # used to compute the chance of a loss
     qf = 0.5 * (1.0 + q.sigmoid() - qm.sigmoid())  # estimated match result (using win, loss and draw probs).
