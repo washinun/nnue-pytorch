@@ -45,7 +45,7 @@ class NNUE(pl.LightningModule):
       in_scaling=511, 
       out_scaling=511, 
       offset=270, 
-      adjust_loss=0.1
+      adjust_loss=0.0
       ):
     super(NNUE, self).__init__()
     self.input = nn.Linear(feature_set.num_features, L1)
@@ -197,7 +197,8 @@ class NNUE(pl.LightningModule):
     pt = pf * actual_lambda + t * (1.0 - actual_lambda)
 
     loss = torch.pow(torch.abs(pt - qf), 2.5)
-    loss = loss * ((qf > pt) * self.adjust_loss + 1)
+    if self.adjust_loss != 0.0:
+        loss = loss * ((qf > pt) * self.adjust_loss + 1)
     loss = loss.mean()
     self.log(loss_type, loss)
     return loss
