@@ -71,7 +71,7 @@ def main():
   parser.add_argument("--in-scaling", default=511, type=int, dest='in_scaling', help="in-scaling.")
   parser.add_argument("--out-scaling", default=511, type=int, dest='out_scaling', help="out-scaling.")
   parser.add_argument("--offset", default=270, type=int, dest='offset', help="offset.")
-  parser.add_argument("--adjust-loss", default=0.1, type=float, dest='adjust_loss', help="adjust loss.")
+  parser.add_argument("--adjust-loss", default=0.0, type=float, dest='adjust_loss', help="adjust loss.")
   features.add_argparse_args(parser)
   args = parser.parse_args()
 
