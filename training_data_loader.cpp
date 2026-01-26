@@ -628,17 +628,18 @@ extern "C" {
         return nullptr;
     }
 
-    EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, const char* filename, int batch_size, bool cyclic, bool filtered, int random_fen_skipping)
+    EXPORT Stream<SparseBatch>* CDECL create_sparse_batch_stream(const char* feature_set_c, int concurrency, const char* filename, int batch_size, bool cyclic, bool filtered, int random_fen_skipping, int early_fen_skipping)
     {
         EnsureInitialize();
 
         std::function<bool(const TrainingDataEntry&)> skipPredicate = nullptr;
-        if (filtered || random_fen_skipping)
+        if (filtered || random_fen_skipping || early_fen_skipping)
         {
             skipPredicate = [
                 random_fen_skipping,
                     prob = double(random_fen_skipping) / (random_fen_skipping + 1),
-                    filtered
+                    filtered,
+                    early_fen_skipping
             ](const TrainingDataEntry& e){
 
                     auto do_skip = [&]() {
@@ -651,7 +652,10 @@ extern "C" {
                         return (e.isCapturingMove() || e.isInCheck());
                     };
 
-                    static thread_local std::mt19937 gen(std::random_device{}());
+                    if (early_fen_skipping > 0 && e.ply < early_fen_skipping) {
+                        return true;
+                    }
+
                     return (random_fen_skipping && do_skip()) || (filtered && do_filter());
                 };
         }
@@ -703,7 +707,7 @@ extern "C" {
 
 int main()
 {
-    auto stream = create_sparse_batch_stream("HalfKA_hm", 4, R"(C:\shogi\training_data\training_data.suisho5.depth=9\kifu.tag=train.depth=9.num_positions=1000000000.start_time=1648946223.thread_index=000.bin)", 8192, true, false, 0);
+    auto stream = create_sparse_batch_stream("HalfKA_hm", 4, R"(C:\shogi\training_data\training_data.suisho5.depth=9\kifu.tag=train.depth=9.num_positions=1000000000.start_time=1648946223.thread_index=000.bin)", 16384, true, false, 3, -1);
     auto t0 = std::chrono::high_resolution_clock::now();
     for (int i = 0; i < 1000; ++i)
     {

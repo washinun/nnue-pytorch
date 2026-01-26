@@ -12,14 +12,14 @@ from torch import set_num_threads as t_set_num_threads
 from pytorch_lightning import loggers as pl_loggers
 from torch.utils.data import DataLoader, Dataset
 
-def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, main_device, epoch_size):
+def data_loader_cc(train_filename, val_filename, feature_set, num_workers, batch_size, filtered, random_fen_skipping, early_fen_skipping, main_device, epoch_size):
   # Epoch and validation sizes are arbitrary
   val_size = 1000000
   features_name = feature_set.name
   train_infinite = nnue_dataset.SparseBatchDataset(features_name, train_filename, batch_size, num_workers=num_workers,
-                                                   filtered=filtered, random_fen_skipping=random_fen_skipping, device=main_device)
+                                                   filtered=filtered, random_fen_skipping=random_fen_skipping, early_fen_skipping=early_fen_skipping, device=main_device)
   val_infinite = nnue_dataset.SparseBatchDataset(features_name, val_filename, batch_size, filtered=filtered,
-                                                   random_fen_skipping=random_fen_skipping, device=main_device)
+                                                   random_fen_skipping=random_fen_skipping, early_fen_skipping=early_fen_skipping, device=main_device)
   # num_workers has to be 0 for sparse, and 1 for dense
   # it currently cannot work in parallel mode but it shouldn't need to
   train = DataLoader(nnue_dataset.FixedNumBatchesDataset(train_infinite, (epoch_size + batch_size - 1) // batch_size), batch_size=None, batch_sampler=None)
@@ -66,6 +66,7 @@ def main():
   parser.add_argument("--seed", default=42, type=int, dest='seed', help="torch seed to use.")
   parser.add_argument("--smart-fen-skipping", action='store_true', dest='smart_fen_skipping', help="If enabled positions that are bad training targets will be skipped during loading. Default: False")
   parser.add_argument("--random-fen-skipping", default=0, type=int, dest='random_fen_skipping', help="skip fens randomly on average random_fen_skipping before using one.")
+  parser.add_argument("--early-fen-skipping", type=int, default=-1, dest='early_fen_skipping', help="Skip n plies from the start.")
   parser.add_argument("--resume-from-model", dest='resume_from_model', help="Initializes training using the weights from the given .pt model")
   parser.add_argument("--epoch-size", default=1000000, type=int, dest='epoch_size', help="epoch size.")
   parser.add_argument("--in-scaling", default=511, type=int, dest='in_scaling', help="in-scaling.")
@@ -130,6 +131,7 @@ def main():
 
   print('Smart fen skipping: {}'.format(args.smart_fen_skipping))
   print('Random fen skipping: {}'.format(args.random_fen_skipping))
+  print('Skip early plies: {}'.format(args.early_fen_skipping))
 
   if args.threads > 0:
     print('limiting torch to {} threads.'.format(args.threads))
@@ -149,7 +151,7 @@ def main():
     train, val = data_loader_py(args.train, args.val, feature_set, batch_size, main_device)
   else:
     print('Using c++ data loader')
-    train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, main_device, args.epoch_size)
+    train, val = data_loader_cc(args.train, args.val, feature_set, args.num_workers, batch_size, args.smart_fen_skipping, args.random_fen_skipping, args.early_fen_skipping, main_device, args.epoch_size)
 
   trainer.fit(nnue, train, val)
 

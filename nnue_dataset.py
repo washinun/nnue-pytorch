@@ -61,6 +61,7 @@ class TrainingDataProvider:
         batch_size=None,
         filtered=False,
         random_fen_skipping=0,
+        early_fen_skipping=-1,
         device='cpu'):
 
         self.feature_set = feature_set.encode('utf-8')
@@ -74,12 +75,13 @@ class TrainingDataProvider:
         self.batch_size = batch_size
         self.filtered = filtered
         self.random_fen_skipping = random_fen_skipping
+        self.early_fen_skipping  = early_fen_skipping
         self.device = device
 
         if batch_size:
-            self.stream = self.create_stream(self.feature_set, self.num_workers, self.filename, batch_size, cyclic, filtered, random_fen_skipping)
+            self.stream = self.create_stream(self.feature_set, self.num_workers, self.filename, batch_size, cyclic, filtered, random_fen_skipping, early_fen_skipping)
         else:
-            self.stream = self.create_stream(self.feature_set, self.num_workers, self.filename, cyclic, filtered, random_fen_skipping)
+            self.stream = self.create_stream(self.feature_set, self.num_workers, self.filename, cyclic, filtered, random_fen_skipping, early_fen_skipping)
 
     def __iter__(self):
         return self
@@ -99,7 +101,7 @@ class TrainingDataProvider:
 
 create_sparse_batch_stream = dll.create_sparse_batch_stream
 create_sparse_batch_stream.restype = ctypes.c_void_p
-create_sparse_batch_stream.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
+create_sparse_batch_stream.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_bool, ctypes.c_bool, ctypes.c_int, ctypes.c_int]
 destroy_sparse_batch_stream = dll.destroy_sparse_batch_stream
 destroy_sparse_batch_stream.argtypes = [ctypes.c_void_p]
 
@@ -128,7 +130,7 @@ def make_sparse_batch_from_fens(feature_set, fens, scores, plies, results):
     return b
 
 class SparseBatchProvider(TrainingDataProvider):
-    def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='cpu'):
+    def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, early_fen_skipping=-1, device='cpu'):
         super(SparseBatchProvider, self).__init__(
             feature_set,
             create_sparse_batch_stream,
@@ -141,10 +143,11 @@ class SparseBatchProvider(TrainingDataProvider):
             batch_size,
             filtered,
             random_fen_skipping,
+            early_fen_skipping,
             device)
 
 class SparseBatchDataset(torch.utils.data.IterableDataset):
-  def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='cpu'):
+  def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, early_fen_skipping=0, device='cpu'):
     super(SparseBatchDataset).__init__()
     self.feature_set = feature_set
     self.filename = filename
@@ -153,10 +156,11 @@ class SparseBatchDataset(torch.utils.data.IterableDataset):
     self.num_workers = num_workers
     self.filtered = filtered
     self.random_fen_skipping = random_fen_skipping
+    self.early_fen_skipping = early_fen_skipping
     self.device = device
 
   def __iter__(self):
-    return SparseBatchProvider(self.feature_set, self.filename, self.batch_size, cyclic=self.cyclic, num_workers=self.num_workers, filtered=self.filtered, random_fen_skipping=self.random_fen_skipping, device=self.device)
+    return SparseBatchProvider(self.feature_set, self.filename, self.batch_size, cyclic=self.cyclic, num_workers=self.num_workers, filtered=self.filtered, random_fen_skipping=self.random_fen_skipping, early_fen_skipping = self.early_fen_skipping, device=self.device)
 
 class FixedNumBatchesDataset(Dataset):
   def __init__(self, dataset, num_batches):
