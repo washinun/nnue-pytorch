@@ -131,7 +131,7 @@ def main():
 
   print('Smart fen skipping: {}'.format(args.smart_fen_skipping))
   print('Random fen skipping: {}'.format(args.random_fen_skipping))
-  print('Skip early plies: {}'.format(args.early_fen_skipping))
+  print('Early fen skipping: {}'.format(args.early_fen_skipping))
 
   if args.threads > 0:
     print('limiting torch to {} threads.'.format(args.threads))
